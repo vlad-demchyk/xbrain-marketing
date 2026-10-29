@@ -1,0 +1,16 @@
+{
+  "name": "xbrain-marketing",
+  "owner": {
+    "name": "Vlad Demchyk"
+  },
+  "metadata": {
+    "description": "XBrain Marketing: marketing and SEO skills and media agents for Claude Desktop and Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "xbrain-marketing",
+      "source": "./",
+      "description": "Marketing and SEO skills and media agents for your own products."
+    }
+  ]
+}

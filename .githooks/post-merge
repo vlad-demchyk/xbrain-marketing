@@ -1,0 +1,14 @@
+#!/bin/sh
+# Reports a merge commit made by `git merge` to the daemon (T-1779). Git runs `post-merge`, not
+# `post-commit`, after a merge without a conflict, so without this hook the merge commit and the
+# tasks of the merged branch (link merge) never reached the daemon. The delivery is `post-commit`'s
+# own, called from here: one copy of the logic. Never blocks: the merge already happened.
+#
+# Only a real merge commit is reported. A fast-forward makes no commit of its own and its commits
+# were delivered by the hooks that ran when they were made; `--squash` leaves no commit yet, the
+# next `git commit` delivers it.
+git rev-parse -q --verify HEAD^2 >/dev/null 2>&1 || exit 0
+HOOK="$(dirname "$0")/post-commit"
+[ -x "$HOOK" ] || exit 0
+"$HOOK"
+exit 0

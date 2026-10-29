@@ -1,0 +1,99 @@
+#!/bin/sh
+# Reports the commit that just landed to the daemon as a `commit` event, for a project's activity
+# digest. Never blocks: the commit already happened, and a daemon that is down or a project the
+# daemon does not know about are ordinary conditions, not failures worth a message.
+#
+# Runs from `core.hooksPath=.githooks`, tracked in the repository - unlike `.git/hooks/`, every
+# clone gets it for free.
+
+# `.brain/local.json` is out of git, so a worktree (a parallel session's, under
+# `.claude/worktrees/`) has none: its `.brain/` is taken from the main working tree, else a commit
+# made there never reached the daemon and an agent's close of its task found no commit behind it.
+BRAIN=".brain"
+if [ ! -r "$BRAIN/local.json" ]; then
+  COMMON="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+  [ -n "$COMMON" ] && BRAIN="$(dirname "$COMMON")/.brain"
+fi
+LOCAL="$BRAIN/local.json"
+PROJECT="$BRAIN/project.json"
+[ -r "$LOCAL" ] && [ -r "$PROJECT" ] || exit 0
+
+HASH="$(git rev-parse HEAD)"
+SUBJECT="$(git log -1 --pretty=%s)"
+AUTHOR="$(git log -1 --pretty=%an)"
+# What names the commit's tasks besides the task in doing (T-1678): a `Task:` trailer in the whole
+# message, the worktree branch registered on tasks, and for a merge the commits it brings in.
+MESSAGE="$(git log -1 --pretty=%B)"
+BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+MERGED=""
+if git rev-parse -q --verify HEAD^2 >/dev/null 2>&1; then
+  MERGED="$(git rev-list --max-count=200 HEAD^1..HEAD^2 | tr '\n' ' ')"
+fi
+# Written by `pre-commit` right before this commit landed (T-87: tests as an event source). Absent
+# on a `--no-verify` commit - `checks` then stays null, honestly, rather than claiming zero tests.
+CHECKS_FILE="/tmp/xbrain-checks-$(basename "$(pwd)").json"
+CHECKS="$(cat "$CHECKS_FILE" 2>/dev/null || echo null)"
+rm -f "$CHECKS_FILE"
+
+# A commit the daemon does not take now (busy, stopped, restarting) is not lost (T-1658): it goes to
+# `.brain/commit-queue.jsonl`, a detached process retries it with growing pauses, the next commit's
+# hook retries the queue too, and the daemon takes whatever is left at its start. A hash the daemon
+# already has is a no-op, so a retry never records a commit twice.
+QUEUE="$BRAIN/commit-queue.jsonl"
+
+node -e '
+const fs = require("fs");
+const { spawn } = require("child_process");
+const [hash, subject, author, checksRaw, local, project, queue, message, branch, mergedRaw] = process.argv.slice(1);
+
+// The detached retry: claims the queue by renaming it, posts each line with growing pauses, and
+// puts back what still fails. Its own process, so the commit never waits for it.
+const RETRY = `
+const fs = require("fs");
+const [queue, base, token] = process.argv.slice(1);
+const claimed = queue + ".hook-" + process.pid;
+try { fs.renameSync(queue, claimed); } catch (e) { process.exit(0); }
+let lines = fs.readFileSync(claimed, "utf8").split("\\n").filter((l) => l.trim());
+const post = (line) => fetch(base + "/events/commit", {
+  method: "POST",
+  headers: { "x-brain-token": token, "content-type": "application/json" },
+  signal: AbortSignal.timeout(10000),
+  body: line,
+}).then((r) => r.ok, () => false);
+(async () => {
+  for (const pause of [0, 5000, 20000, 60000]) {
+    if (!lines.length) break;
+    await new Promise((done) => setTimeout(done, pause));
+    const left = [];
+    for (const line of lines) if (!(await post(line))) left.push(line);
+    lines = left;
+  }
+  if (lines.length) fs.appendFileSync(queue, lines.join("\\n") + "\\n");
+  fs.rmSync(claimed, { force: true });
+})();
+`;
+
+try {
+  const cfg = JSON.parse(fs.readFileSync(local, "utf8"));
+  const slug = JSON.parse(fs.readFileSync(project, "utf8")).slug;
+  const base = `http://127.0.0.1:${cfg.port}`;
+  let checks = null;
+  try { checks = JSON.parse(checksRaw); } catch (e) { /* stays null */ }
+  const merged = String(mergedRaw || "").split(" ").filter(Boolean);
+  const event = { project: slug, hash, subject, author, checks, message, branch, merged };
+  const retry = () =>
+    spawn(process.execPath, ["-e", RETRY, queue, base, cfg.token], { detached: true, stdio: "ignore" }).unref();
+  // The first try is quick and carries this process: while git is alive the daemon finds the agent
+  // above it, whose task in work takes the commit. 1.5s never makes a commit feel stuck.
+  fetch(`${base}/events/commit`, {
+    method: "POST",
+    headers: { "x-brain-token": cfg.token, "content-type": "application/json" },
+    signal: AbortSignal.timeout(1500),
+    body: JSON.stringify({ ...event, pid: process.pid }),
+  }).then((r) => r.ok, () => false).then((ok) => {
+    if (!ok) fs.appendFileSync(queue, JSON.stringify(event) + "\n");
+    if (fs.existsSync(queue)) retry();
+  });
+} catch (e) { /* stay silent */ }
+' "$HASH" "$SUBJECT" "$AUTHOR" "$CHECKS" "$LOCAL" "$PROJECT" "$QUEUE" "$MESSAGE" "$BRANCH" "$MERGED" 2>/dev/null
+exit 0
