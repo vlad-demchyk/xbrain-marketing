@@ -93,7 +93,7 @@ class Storage:
                 raise
             http("POST", f"{self.base}/bucket", headers=self.auth, data={
                 "id": self.bucket, "name": self.bucket, "public": True,
-                "file_size_limit": 104857600, "allowed_mime_types": ["image/png", "image/jpeg", "video/mp4"],
+                "file_size_limit": 52428800, "allowed_mime_types": ["image/png", "image/jpeg", "video/mp4"],
             })
         self.ready = True
 
@@ -102,7 +102,7 @@ class Storage:
         kind = mimetypes.guess_type(local)[0] or "application/octet-stream"
         with open(local, "rb") as handle:
             http("POST", f"{self.base}/object/{self.bucket}/{remote}", raw=handle.read(),
-                 headers={**self.auth, "Content-Type": kind, "x-upsert": "true"})
+                 headers={**self.auth, "Content-Type": kind, "x-upsert": "true", "cache-control": "max-age=60"})
         return f"{self.base}/object/public/{self.bucket}/{urllib.parse.quote(remote)}"
 
     def delete(self, remotes):
