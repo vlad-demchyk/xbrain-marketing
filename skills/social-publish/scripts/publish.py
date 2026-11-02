@@ -77,7 +77,9 @@ def http(method, url, *, params=None, data=None, headers=None, raw=None):
 class Storage:
     def __init__(self, env, bucket):
         self.base = env["SUPABASE_URL"].rstrip("/") + "/storage/v1"
-        self.auth = {"Authorization": f"Bearer {env['SUPABASE_SERVICE_ROLE_KEY']}", "apikey": env["SUPABASE_SERVICE_ROLE_KEY"]}
+        key = env["SUPABASE_SERVICE_ROLE_KEY"]
+        # A new secret key (sb_secret_...) is not a JWT: the gateway reads it from apikey alone.
+        self.auth = {"apikey": key} if key.startswith("sb_") else {"Authorization": f"Bearer {key}", "apikey": key}
         self.bucket = bucket
         self.ready = False
 
