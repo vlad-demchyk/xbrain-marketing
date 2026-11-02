@@ -20,6 +20,7 @@ Start with the `marketing-start` skill: it asks which product, creates its produ
 | `trust-check` | Dark patterns, disclosure, promise match, awareness stages |
 | `geo-check` | Is the product mentioned in AI answers, and which sources to earn |
 | `weekly-review` | Weekly numbers, what worked, next hypothesis |
+| `social-publish` | Publishes a package's approved Threads and Instagram items on time; media hosted in Supabase Storage only while publishing |
 
 **Selected from [marketingskills](https://github.com/coreyhaines31/marketingskills)** (Corey Haines,
 MIT), with the product context moved to the product card: `product-marketing` (extended with
